@@ -96,7 +96,7 @@ default_expirations = {
     Timeline: datetime.timedelta(days=1),
     Summoner: datetime.timedelta(days=1),
     ShardStatus: datetime.timedelta(hours=1),
-    CurrentMatch: datetime.timedelta(hours=0.5),
+    CurrentMatch: datetime.timedelta(hours=0.0700),
     FeaturedMatches: datetime.timedelta(hours=0.5),
 }
 
