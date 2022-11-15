@@ -66,9 +66,7 @@ class Region(Enum):
         if self is Region.north_america:
             return Continent.americas
         if self is Region.oceania:
-            return (
-                Continent.americas
-            )  # OCE content is managed by Americas server (as per https://i.imgur.com/FUyf5kv.png), this breaks OCE queries if set to Asia
+            return Continent.sea
         if self is Region.turkey:
             return Continent.europe
         if self is Region.russia:
@@ -138,6 +136,7 @@ class Continent(Enum):
     americas = "AMERICAS"
     asia = "ASIA"
     europe = "EUROPE"
+    sea = "SEA"
 
 
 class Key(Enum):
@@ -303,64 +302,6 @@ class Rank:
 
     def __ge__(self, other):
         return self.tuple >= other.tuple
-
-
-class Season(Enum):
-    preseason_3 = "PRESEASON3"
-    season_3 = "SEASON3"
-    preseason_4 = "PRESEASON2014"
-    season_4 = "SEASON2014"
-    preseason_5 = "PRESEASON2015"
-    season_5 = "SEASON2015"
-    preseason_6 = "PRESEASON2016"
-    season_6 = "SEASON2016"
-    preseason_7 = "PRESEASON2017"
-    season_7 = "SEASON2017"
-    preseason_8 = "PRESEASON2018"
-    season_8 = "SEASON2018"
-    preseason_9 = "PRESEASON2019"
-    season_9 = "SEASON2019"
-
-    @property
-    def id(self):
-        return SEASON_IDS[self]
-
-    def from_id(id: int):
-        return {i: season for season, i in SEASON_IDS.items()}[id]
-
-    def start(self, region: Region) -> arrow.Arrow:
-        from .core import Patch
-
-        if Patch._Patch__patches is None:
-            Patch.__load__()
-        for patch in Patch._Patch__patches[region]:
-            if patch.season == self:
-                return patch.start
-
-    def end(self, region: Region) -> arrow.Arrow:
-        from .core import Patch
-
-        for patch in reversed(Patch._Patch__patches[region]):
-            if patch.season == self:
-                return patch.end
-
-
-SEASON_IDS = {
-    Season.preseason_3: 0,
-    Season.season_3: 1,
-    Season.preseason_4: 2,
-    Season.season_4: 3,
-    Season.preseason_5: 4,
-    Season.season_5: 5,
-    Season.preseason_6: 6,
-    Season.season_6: 7,
-    Season.preseason_7: 8,
-    Season.season_7: 9,
-    Season.preseason_8: 10,
-    Season.season_8: 11,
-    Season.preseason_9: 12,
-    Season.season_9: 13,
-}
 
 
 class GameType(Enum):
@@ -531,6 +472,7 @@ class Tower(Enum):
 # https://developer.riotgames.com/game-constants.html
 # https://discussion.developer.riotgames.com/articles/3482/multiple-queueids-are-being-updated-with-patch-719.html
 # https://github.com/stelar7/L4J8/blob/master/src/main/java/no/stelar7/api/l4j8/basic/constants/types/GameQueueType.java
+# https://github.com/RiotGames/developer-relations/issues/574
 class Queue(Enum):
     custom = "CUSTOM"  # 0
     deprecated_blind_fives = "NORMAL_5x5_BLIND"  # 2
@@ -609,8 +551,10 @@ class Queue(Enum):
     odyssey_crewmember = "ODYSSEY_CREWMEMBER"  # 1050
     odyssey_captain = "ODYSSEY_CAPTAIN"  # 1060
     odyssey_onslaught = "ODYSSEY_ONSLAUGHT"  # 1070
-    ranked_tft = "RANKED_TFT"  # 1100
     normal_tft = "NORMAL_TFT"  # 1090
+    ranked_tft = "RANKED_TFT"  # 1100
+    ranked_tft_pairs = "RANKED_TFT_PAIRS"  # 1150
+    ranked_tft_double_up = "RANKED_TFT_DOUBLE_UP"  # 1160
     deprecated_nexus_blitz = "NEXUS_BLITZ"  # 1200
     nexus_blitz = "NEXUS_BLITZ"  # 1300
     ultimate_spellbook = "ULTIMATE_SPELLBOOK"  # 1400
@@ -619,7 +563,7 @@ class Queue(Enum):
     tutorial3 = "TUTORIAL_3"  # Summoner's Rift  Tutorial 3
 
     def from_id(id: int):
-        return {i: season for season, i in QUEUE_IDS.items()}[id]
+        return {i: queue for queue, i in QUEUE_IDS.items()}[id]
 
     @property
     def id(self):
@@ -699,8 +643,10 @@ QUEUE_IDS = {
     Queue.odyssey_crewmember: 1050,  # Odyssey: Extraction
     Queue.odyssey_captain: 1060,  # Odyssey: Extraction
     Queue.odyssey_onslaught: 1070,  # Odyssey: Extraction
-    Queue.ranked_tft: 1100,  #  Convergence, Ranked Teamfight Tactics games
     Queue.normal_tft: 1090,  #  Convergence, Normal Teamfight Tactics games
+    Queue.ranked_tft: 1100,  #  Convergence, Ranked Teamfight Tactics games
+    Queue.ranked_tft_pairs: 1150,  # Convergence, Teamfight Tactics (Double Up Beta) games
+    Queue.ranked_tft_double_up: 1160,  # Convergence, Teamfight Tactics Double Up
     Queue.deprecated_nexus_blitz: 1200,  # Nexus Blitz map    Nexus Blitz Deprecated in patch 9.2 in favor of queueId 1300
     Queue.nexus_blitz: 1300,  # Nexus Blitz map    Nexus Blitz
     Queue.ultimate_spellbook: 1400,  # Summoner's Rift   Ultimate Spellbook
@@ -720,4 +666,6 @@ RANKED_QUEUES = {
     Queue.ranked_flex_fives,  # Summoner's Rift    5v5 Ranked Flex games
     Queue.ranked_flex_threes,  # Twisted Treeline    3v3 Ranked Flex games
     Queue.ranked_tft,  # Convergence  Ranked Teamfight Tactics games
+    Queue.ranked_tft_pairs,  # Convergence  Ranked Teamfight Tactics (Double Up Beta) games
+    Queue.ranked_tft_double_up,  # Convergence  Ranked Teamfight Tactics Double Up games
 }

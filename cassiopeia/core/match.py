@@ -3,7 +3,7 @@ import arrow
 import datetime
 import itertools
 from collections import Counter
-from typing import List, Dict, Union, Generator
+from typing import List, Dict, Union, Generator, Optional
 
 from datapipelines import NotFoundError
 from merakicommons.cache import lazy, lazy_property
@@ -26,7 +26,6 @@ from ..data import (
     MatchType,
     Queue,
     Side,
-    Season,
     Lane,
     Role,
     Key,
@@ -131,7 +130,7 @@ def _choose_staticdata_version(match):
 
 class MatchListData(CoreDataList):
     _dto_type = dto.MatchListDto
-    _renamed = {"champion": "championIds", "queue": "queues", "season": "seasons"}
+    _renamed = {}
 
 
 class PositionData(CoreData):
@@ -353,9 +352,6 @@ class ParticipantData(CoreData):
         }
         self.stats = ParticipantStatsData(**stats)
 
-        # TODO: I don't think this is supported anymore, same for the attributes relying on this (role, lane, ...)
-        if "timeline" in kwargs:
-            self.timeline = ParticipantTimelineData(**kwargs.pop("timeline"))
         if "teamId" in kwargs:
             self.side = Side(kwargs.pop("teamId"))
 
@@ -409,13 +405,14 @@ class MatchData(CoreData):
         "gameType": "type",
         "gameName": "name",
         "queueId": "queue",
+        "platformId": "platform",
     }
 
     def __call__(self, **kwargs):
         if "gameCreation" in kwargs:
             self.creation = arrow.get(kwargs["gameCreation"] / 1000)
         if "gameDuration" in kwargs:
-            self.duration = datetime.timedelta(seconds=kwargs["gameDuration"] / 1000)
+            self.duration = datetime.timedelta(seconds=kwargs["gameDuration"])
         if "gameStartTimestamp" in kwargs:
             self.start = arrow.get(kwargs["gameStartTimestamp"] / 1000)
 
@@ -460,31 +457,28 @@ class MatchHistory(CassiopeiaLazyList):  # type: List[Match]
         *,
         puuid: str,
         continent: Continent = None,
-        region: Region = None,
-        platform: Platform = None,
-        begin_index: int = None,
-        end_index: int = None,
-        begin_time: arrow.Arrow = None,
+        start_time: arrow.Arrow = None,
         end_time: arrow.Arrow = None,
         queue: Queue = None,
         type: MatchType = None,
+        start: int = None,
+        count: int = None,
     ):
-        assert end_index is None or end_index > begin_index
-        if begin_time is not None and end_time is not None and begin_time > end_time:
-            raise ValueError("`end_time` should be greater than `begin_time`")
+        if start_time is not None and end_time is not None and start_time > end_time:
+            raise ValueError("`end_time` should be greater than `start_time`")
         kwargs = {
             "continent": continent,
             "puuid": puuid,
             "queue": queue,
             "type": type,
-            "begin_index": begin_index,
-            "end_index": end_index,
+            "start": start,
+            "count": count,
         }
-        if begin_time is not None and not isinstance(begin_time, (int, float)):
-            begin_time = begin_time.int_timestamp * 1000
-        kwargs["begin_time"] = begin_time
+        if start_time is not None and not isinstance(start_time, (int, float)):
+            start_time = start_time.int_timestamp
+        kwargs["start_time"] = start_time
         if end_time is not None and not isinstance(end_time, (int, float)):
-            end_time = end_time.int_timestamp * 1000
+            end_time = end_time.int_timestamp
         kwargs["end_time"] = end_time
         CassiopeiaObject.__init__(self, **kwargs)
 
@@ -494,31 +488,29 @@ class MatchHistory(CassiopeiaLazyList):  # type: List[Match]
         *,
         continent: Continent,
         puuid: str,
-        region: Region = None,
-        platform: Platform = None,
-        begin_index: int = None,
-        end_index: int = None,
-        begin_time: arrow.Arrow = None,
+        start_time: arrow.Arrow = None,
         end_time: arrow.Arrow = None,
         queue: Queue = None,
         type: MatchType = None,
+        start: int = None,
+        count: int = None,
     ):
         query = {"continent": continent, "puuid": puuid}
 
-        if begin_index is not None:
-            query["beginIndex"] = begin_index
+        if start is not None:
+            query["start"] = start
 
-        if end_index is not None:
-            query["endIndex"] = end_index
+        if count is not None:
+            query["count"] = count
 
-        if begin_time is not None:
-            if isinstance(begin_time, arrow.Arrow):
-                begin_time = begin_time.int_timestamp * 1000
-            query["beginTime"] = begin_time
+        if start_time is not None:
+            if isinstance(start_time, arrow.Arrow):
+                start_time = start_time.int_timestamp
+            query["startTime"] = start_time
 
         if end_time is not None:
             if isinstance(end_time, arrow.Arrow):
-                end_time = end_time.int_timestamp * 1000
+                end_time = end_time.int_timestamp
             query["endTime"] = end_time
 
         if queue is not None:
@@ -529,6 +521,10 @@ class MatchHistory(CassiopeiaLazyList):  # type: List[Match]
 
         return query
 
+    # For type hints
+    def __getitem__(self, item: Union[str, int]) -> "Match":
+        return super().__getitem__(item)
+
     @classmethod
     def from_generator(cls, generator: Generator, **kwargs):
         self = cls.__new__(cls)
@@ -536,9 +532,9 @@ class MatchHistory(CassiopeiaLazyList):  # type: List[Match]
         return self
 
     def __call__(self, **kwargs) -> "MatchHistory":
-        kwargs.setdefault("begin_index", self.begin_index)
-        kwargs.setdefault("end_index", self.end_index)
-        kwargs.setdefault("begin_time", self.begin_time)
+        kwargs.setdefault("start", self.start)
+        kwargs.setdefault("count", self.count)
+        kwargs.setdefault("start_time", self.start_time)
         kwargs.setdefault("end_time", self.end_time)
         kwargs.setdefault("queue", self.queue)
         kwargs.setdefault("type", self.match_type)
@@ -547,14 +543,6 @@ class MatchHistory(CassiopeiaLazyList):  # type: List[Match]
     def continent(self) -> Continent:
         return Continent(self._data[MatchListData].continent)
 
-    @lazy_property
-    def region(self) -> Region:
-        return Region(self._data[MatchListData].region)
-
-    @lazy_property
-    def platform(self) -> Platform:
-        return self.region.platform
-
     def queue(self) -> Queue:
         return Queue(self._data[MatchListData].queue)
 
@@ -562,30 +550,30 @@ class MatchHistory(CassiopeiaLazyList):  # type: List[Match]
         return MatchType(self._data[MatchData].type)
 
     @property
-    def begin_index(self) -> Union[int, None]:
+    def start(self) -> Union[int, None]:
         try:
-            return self._data[MatchListData].beginIndex
+            return self._data[MatchListData].start
         except AttributeError:
             return None
 
     @property
-    def end_index(self) -> Union[int, None]:
+    def count(self) -> Union[int, None]:
         try:
-            return self._data[MatchListData].endIndex
+            return self._data[MatchListData].count
         except AttributeError:
             return None
 
     @property
-    def begin_time(self) -> arrow.Arrow:
-        time = self._data[MatchListData].begin_time
+    def start_time(self) -> arrow.Arrow:
+        time = self._data[MatchListData].start_time
         if time is not None:
-            return arrow.get(time / 1000)
+            return arrow.get(time)
 
     @property
     def end_time(self) -> arrow.Arrow:
         time = self._data[MatchListData].end_time
         if time is not None:
-            return arrow.get(time / 1000)
+            return arrow.get(time)
 
 
 class Position(CassiopeiaObject):
@@ -789,21 +777,18 @@ class Timeline(CassiopeiaGhost):
         self,
         *,
         id: int = None,
-        continent: Continent = None,
         region: Union[Region, str] = None,
         platform: Platform = None,
     ):
-        kwargs = {"id": id}
-        if continent is not None:
-            kwargs["continent"] = continent
-        elif region is not None:
-            kwargs["continent"] = region.continent
-        elif platform is not None:
-            kwargs["continent"] = platform.continent
+        if isinstance(region, str):
+            region = Region(region)
+        if isinstance(platform, str):
+            platform = Platform(platform)
+        kwargs = {"platform": platform, "id": id}
         super().__init__(**kwargs)
 
     def __get_query__(self):
-        return {"continent": self.continent, "id": self.id}
+        return {"platform": self.platform, "id": self.id}
 
     @property
     def id(self):
@@ -811,15 +796,15 @@ class Timeline(CassiopeiaGhost):
 
     @property
     def continent(self) -> Continent:
-        return Continent(self._data[TimelineData].continent)
+        return self.platform.continent
 
     @property
     def region(self) -> Region:
-        return Region(self._data[TimelineData].region)
+        return self.platform.region
 
     @property
     def platform(self) -> Platform:
-        return self.region.platform
+        return Platform(self._data[TimelineData].platform)
 
     @CassiopeiaGhost.property(TimelineData)
     @ghost_load_on
@@ -854,11 +839,12 @@ class ParticipantTimeline(object):
         return self
 
     @property
-    def frames(self):
+    def frames(self) -> List[ParticipantFrame]:
+        timeline: Timeline = self.__match.timeline
         these = []
-        for frame in self.__match.timeline.frames:
+        for frame in timeline.frames:
             for pid, pframe in frame.participant_frames.items():
-                pframe.timestamp = frame.timestamp
+                pframe.timestamp = frame.timestamp  # Assign the match's Frame timestamp to the ParticipantFrame
                 if pframe.participant_id == self.id:
                     these.append(pframe)
         return these
@@ -957,7 +943,7 @@ class ParticipantState:
             if rounded_frame_timestamp > self._time:
                 break
             latest_frame = frame
-        self._latest_frame = latest_frame
+        self._latest_frame: Optional[ParticipantFrame] = latest_frame
         self._item_state = _ItemState()
         self._skills = Counter()
         self._kills = 0
@@ -990,6 +976,7 @@ class ParticipantState:
             # print(f"Did not process event {event.to_dict()}")
             pass
         self._processed_events.append(event)
+        self._processed_events.sort(key=lambda event: event.timestamp)
 
     @property
     def items(self) -> SearchableList:
@@ -1050,22 +1037,26 @@ class ParticipantState:
 
     @property
     def position(self) -> Position:
-        # The latest position is either from the latest event or from the participant timeline frame
+        # The latest position is either from the latest event or from the participant timeline frame.
+        # Get the most recent frame. This is our baseline.
         latest_frame_ts = self._latest_frame.timestamp
-        latest_event_with_ts = [
+        # Now loop through all events and use the latest event's position if the event was generated later than the frame.
+        events = [
             (getattr(event, "timestamp", None), getattr(event, "position", None))
             for event in self._processed_events
         ]
-        latest_event_with_ts = [
+        events_with_ts_and_position = [
             (ts, p)
-            for ts, p in latest_event_with_ts
+            for ts, p in events
             if ts is not None and p is not None
         ]
-        latest_event_ts = sorted(latest_event_with_ts)[-1]
-        if latest_frame_ts > latest_event_ts[0]:
-            return self._latest_frame.position
-        else:
-            return latest_event_ts[1]
+        # If an event exists with both a timestamp and position, and the event was generated later that the frame, return its position.
+        if len(events_with_ts_and_position) > 0:
+            latest_event_ts, latest_event_position = events_with_ts_and_position[-1]
+            if latest_event_ts > latest_frame_ts:
+                return latest_event_position
+        # If we got this far, then the latest event (if it exists) is not relevant. Return the position from the latest frame.
+        return self._latest_frame.position
 
     @property
     def experience(self) -> int:
@@ -1498,7 +1489,7 @@ class ParticipantStats(CassiopeiaObject):
     @property
     @load_match_on_attributeerror
     def total_damage_shielded_on_teammates(self) -> int:
-        return self._data[ParticipantStatsData].totalDamageshieldedOnTeammates
+        return self._data[ParticipantStatsData].totalDamageShieldedOnTeammates
 
     @property
     @load_match_on_attributeerror
@@ -1644,11 +1635,11 @@ class Participant(CassiopeiaObject):
 
     @property
     def lane(self) -> Lane:
-        return Lane.from_match_naming_scheme(self._data[ParticipantData].timeline.lane)
+        return Lane.from_match_naming_scheme(self._data[ParticipantData].individualPosition)
 
     @property
     def role(self) -> Role:
-        return Role.from_match_naming_scheme(self._data[ParticipantData].timeline.role)
+        return Role.from_match_naming_scheme(self._data[ParticipantData].stats.role)
 
     @property
     def skill_order(self) -> List[Key]:
@@ -1761,16 +1752,6 @@ class Participant(CassiopeiaObject):
 
     @lazy_property
     @load_match_on_attributeerror
-    def rank_last_season(self) -> Tier:
-        return Tier(self._data[ParticipantData].rankLastSeason)
-
-    @property
-    @load_match_on_attributeerror
-    def match_history_uri(self) -> str:
-        return self._data[ParticipantData].matchHistoryUri
-
-    @lazy_property
-    @load_match_on_attributeerror
     def champion(self) -> "Champion":
         # See ParticipantStats for info
         version = _choose_staticdata_version(self.__match)
@@ -1876,7 +1857,7 @@ class Team(CassiopeiaObject):
 
     @property
     def baron_kills(self) -> int:
-        return self._data[TeamData].objectives["baron"].kills
+        return self._data[TeamData].objectives["baronKills"].kills
 
     @property
     def inhibitor_kills(self) -> int:
@@ -1888,7 +1869,7 @@ class Team(CassiopeiaObject):
 
     @property
     def dragon_kills(self) -> int:
-        return self._data[TeamData].objectives["dragon"].kills
+        return self._data[TeamData].objectives["dragonKills"].kills
 
     @property
     def side(self) -> Side:
@@ -1933,26 +1914,30 @@ class Match(CassiopeiaGhost):
     def __init__(
         self,
         *,
-        id: int = None,
-        continent: Union[Continent, str] = None,
+        id: str = None,
         region: Union[Region, str] = None,
         platform: Union[Platform, str] = None,
     ):
+        if isinstance(platform, str):
+            platform = Platform(platform)
         if isinstance(region, str):
             region = Region(region)
-        if region is not None:
-            continent = region.continent
-        kwargs = {"continent": continent, "id": id}
+        if platform is None:
+            platform = region.platform
+        kwargs = {"platform": platform, "id": id}
         super().__init__(**kwargs)
         self.__participants = []  # For lazy-loading the participants in a special way
         self._timeline = None
 
     def __get_query__(self):
-        return {"continent": self.continent, "id": self.id}
+        return {"platform": self.platform, "id": self.id}
 
     @classmethod
     def from_match_reference(cls, ref: MatchReferenceData):
-        instance = cls(id=ref.id, continent=ref.continent)
+        platform, id = ref.id.split("_")
+        id = int(id)
+        platform = Platform(platform)
+        instance = cls(id=id, platform=platform)
         instance._timeline = None
         return instance
 
@@ -1969,7 +1954,7 @@ class Match(CassiopeiaGhost):
     @lazy_property
     def continent(self) -> Continent:
         """The continent for this match."""
-        return Continent(self._data[MatchData].continent)
+        return self.platform.continent
 
     @lazy_property
     def region(self) -> Region:
@@ -1981,16 +1966,16 @@ class Match(CassiopeiaGhost):
     @lazy
     def platform(self) -> Platform:
         """The platform for this match."""
-        return Platform(self._data[MatchData].platformId)
+        return Platform(self._data[MatchData].platform)
 
     @property
-    def id(self) -> int:
+    def id(self) -> str:
         return self._data[MatchData].id
 
     @lazy_property
     def timeline(self) -> Timeline:
         if self._timeline is None:
-            self._timeline = Timeline(id=self.id, continent=self.continent)
+            self._timeline = Timeline(id=self.id, region=self.region)
         return self._timeline
 
     @CassiopeiaGhost.property(MatchData)
@@ -2103,6 +2088,8 @@ class Match(CassiopeiaGhost):
 
     @property
     def is_remake(self) -> bool:
+        for p in self.participants:  # Force a load of the participants
+            pass
         # TODO: not sure how this should be handled, it feels like the early surrender state should belong the the match itself, not the participants
         if self.__participants[0] is not None:
             return self.__participants[

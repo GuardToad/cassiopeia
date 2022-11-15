@@ -14,7 +14,7 @@ from datapipelines import (
 from .common import RiotAPIService, APINotFoundError
 from ...data import Continent, Region, Platform, MatchType, Queue, QUEUE_IDS
 from ...dto.match import MatchDto, MatchListDto, TimelineDto
-from ..uniquekeys import convert_to_continent
+from ..uniquekeys import convert_region_to_platform, convert_to_continent
 
 T = TypeVar("T")
 
@@ -39,24 +39,23 @@ class MatchAPI(RiotAPIService):
         pass
 
     _validate_get_match_query = (
-        Query.has("continent")
-        .as_(Continent)
-        .or_("region")
+        Query.has("region")
         .as_(Region)
         .or_("platform")
         .as_(Platform)
         .also.has("id")
-        .as_(str)
+        .as_(int)
     )
 
     @get.register(MatchDto)
-    @validate_query(_validate_get_match_query, convert_to_continent)
+    @validate_query(_validate_get_match_query, convert_region_to_platform)
     def get_match(
         self, query: MutableMapping[str, Any], context: PipelineContext = None
     ) -> MatchDto:
-        continent = query["continent"]
+        platform: Platform = query["platform"]
+        continent = platform.continent
         id = query["id"]
-        url = f"https://{continent.value.lower()}.api.riotgames.com/lol/match/v5/matches/{id}"
+        url = f"https://{continent.value.lower()}.api.riotgames.com/lol/match/v5/matches/{platform.value}_{id}"
         try:
             app_limiter, method_limiter = self._get_rate_limiter(
                 continent, "matches/id"
@@ -80,9 +79,7 @@ class MatchAPI(RiotAPIService):
         return MatchDto(data)
 
     _validate_get_many_match_query = (
-        Query.has("continent")
-        .as_(Continent)
-        .or_("region")
+        Query.has("region")
         .as_(Region)
         .or_("platform")
         .as_(Platform)
@@ -91,15 +88,16 @@ class MatchAPI(RiotAPIService):
     )
 
     @get_many.register(MatchDto)
-    @validate_query(_validate_get_many_match_query, convert_to_continent)
+    @validate_query(_validate_get_many_match_query, convert_region_to_platform)
     def get_many_match(
         self, query: MutableMapping[str, Any], context: PipelineContext = None
     ) -> Generator[MatchDto, None, None]:
-        continent = query["continent"]
+        platform: Platform = query["platform"]
+        continent = platform.continent
 
         def generator():
             for id in query["ids"]:
-                url = f"https://{continent.value.lower()}.api.riotgames.com/lol/match/v5/matches/{id}"
+                url = f"https://{continent.value.lower()}.api.riotgames.com/lol/match/v5/matches/{platform.value}_{id}"
                 try:
                     app_limiter, method_limiter = self._get_rate_limiter(
                         continent, "matches/id"
@@ -136,13 +134,13 @@ class MatchAPI(RiotAPIService):
         .as_(Platform)
         .also.has("puuid")
         .as_(str)
-        .also.has("beginTime")
+        .also.can_have("startTime")
         .as_(int)
         .also.can_have("endTime")
         .as_(int)
-        .also.has("beginIndex")
+        .also.has("start")
         .as_(int)
-        .also.has("maxNumberOfMatches")
+        .also.has("count")
         .as_(float)
         .also.can_have("queue")
         .as_(Queue)
@@ -158,57 +156,24 @@ class MatchAPI(RiotAPIService):
         params = {}
 
         riot_index_interval = 100
-        riot_date_interval = datetime.timedelta(days=7)
 
-        begin_time = query["beginTime"]  # type: arrow.Arrow
-        end_time = query.get("endTime", arrow.now())  # type: arrow.Arrow
-        if isinstance(begin_time, int):
-            begin_time = arrow.get(begin_time / 1000)
-        if isinstance(end_time, int):
-            end_time = arrow.get(end_time / 1000)
+        start = query["start"]
+        params["start"] = start
 
-        def determine_calling_method(begin_time, end_time) -> str:
-            """Returns either "by_date" or "by_index"."""
-            matches_per_date_interval = 10  # This is an assumption
-            seconds_per_day = 60 * 60 * 24
-            riot_date_interval_in_days = (
-                riot_date_interval.total_seconds() / seconds_per_day
-            )  # in units of days
-            npulls_by_date = (
-                (end_time - begin_time).total_seconds()
-                / seconds_per_day
-                / riot_date_interval_in_days
-            )
-            npulls_by_index = (
-                (arrow.now() - begin_time).total_seconds()
-                / seconds_per_day
-                / riot_date_interval_in_days
-                * matches_per_date_interval
-                / riot_index_interval
-            )
-            if math.ceil(npulls_by_date) < math.ceil(npulls_by_index):
-                by = "by_date"
-            else:
-                by = "by_index"
-            return by
+        count = query["count"]
+        params["count"] = int(min(riot_index_interval, count))
 
-        calling_method = determine_calling_method(begin_time, end_time)
+        start_time = query.get("startTime", None)
+        if start_time is not None:
+            if isinstance(start_time, arrow.Arrow):
+                start_time = start_time.int_timestamp
+            params["startTime"] = start_time
 
-        if calling_method == "by_date":
-            params["beginTime"] = begin_time.int_timestamp * 1000
-            if "endTime" in query:
-                params["endTime"] = min(
-                    (begin_time + riot_date_interval).int_timestamp * 1000,
-                    query["endTime"],
-                )
-            else:
-                params["endTime"] = (
-                    begin_time + riot_date_interval
-                ).int_timestamp * 1000
-        else:
-            params["start"] = query["beginIndex"]
-            params["count"] = min(riot_index_interval, query["maxNumberOfMatches"])
-            params["count"] = int(params["count"])
+        end_time = query.get("endTime", None)
+        if end_time is not None:
+            if isinstance(end_time, arrow.Arrow):
+                end_time = end_time.int_timestamp
+            params["endTime"] = end_time
 
         queue = query.get("queue", None)
         if queue is not None:
@@ -237,36 +202,37 @@ class MatchAPI(RiotAPIService):
             "puuid": puuid,
             "type": type,
             "queue": queue,
+            "start": start,
+            "pulled_match_count": params["count"],
         }
 
-        if calling_method == "by_index":
-            data["beginIndex"] = params["start"]
-            data["endIndex"] = params["start"] + params["count"]
-            data["maxNumberOfMatches"] = query["maxNumberOfMatches"]
-        else:
-            data["beginTime"] = params["beginTime"]
-            data["endTime"] = params["endTime"]
+        if start_time is not None:
+            data["startTime"] = start_time
+
+        if end_time is not None:
+            data["endTime"] = end_time
+
         return MatchListDto(data)
 
     _validate_get_timeline_query = (
-        Query.has("continent")
-        .as_(Continent)
-        .or_("region")
+        Query.has("region")
         .as_(Region)
         .or_("platform")
         .as_(Platform)
         .also.has("id")
-        .as_(str)
+        .as_(int)
     )
 
     @get.register(TimelineDto)
-    @validate_query(_validate_get_timeline_query, convert_to_continent)
+    @validate_query(_validate_get_timeline_query, convert_region_to_platform)
     def get_match_timeline(
         self, query: MutableMapping[str, Any], context: PipelineContext = None
     ) -> TimelineDto:
-        continent = query["continent"]
+        platform: Platform = query["platform"]
+        continent: Continent = platform.continent
         id = query["id"]
-        url = f"https://{continent.value.lower()}.api.riotgames.com/lol/match/v5/matches/{id}/timeline"
+
+        url = f"https://{continent.value.lower()}.api.riotgames.com/lol/match/v5/matches/{platform.value}_{id}/timeline"
         try:
             app_limiter, method_limiter = self._get_rate_limiter(
                 continent, "matches/id/timeline"
@@ -280,5 +246,5 @@ class MatchAPI(RiotAPIService):
             raise NotFoundError(str(error)) from error
 
         data["matchId"] = query["id"]
-        data["continent"] = continent.value
+        data["platform"] = platform.value
         return TimelineDto(data)

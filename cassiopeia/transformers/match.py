@@ -51,22 +51,22 @@ class MatchTransformer(DataTransformer):
             "puuid": value["puuid"],
             "type": value["type"],
             "queue": value["queue"],
+            "start": value["start"],
+            "pulled_match_count": value["pulled_match_count"],
         }
-        if "beginIndex" in value:
-            kwargs["beginIndex"] = value["beginIndex"]
-            kwargs["endIndex"] = value["endIndex"]
-            kwargs["maxNumberOfMatches"] = (value.get("maxNumberOfMatches", None),)
-        if "beginTime" in value:
-            kwargs["beginTime"] = value["beginTime"]
+        if "startTime" in value:
+            kwargs["startTime"] = value["startTime"]
+
+        if "endTime" in value:
             kwargs["endTime"] = value["endTime"]
         return MatchListData(
             [
                 self.match_reference_dto_to_data(
-                    {"id": id, "continent": value["continent"]}
+                    {"id": id}
                 )
                 for id in value["match_ids"]
             ],
-            **kwargs
+            **kwargs,
         )
 
     @transform.register(TimelineDto, TimelineData)

@@ -2,7 +2,7 @@ from typing import List, Set, Dict, Union, TextIO
 import arrow
 import datetime
 
-from .data import Region, Queue, Season, Tier, Division, Continent, Platform, MatchType
+from .data import Region, Queue, Tier, Division, Continent, Platform, MatchType
 from .core import (
     Champion,
     Summoner,
@@ -116,24 +116,20 @@ def get_challenger_league(
 
 def get_match_history(
     continent: Continent = None,
-    region: Region = None,
-    platform: Platform = None,
     puuid: str = None,
-    begin_index: int = None,
-    end_index: int = None,
-    begin_time: arrow.Arrow = None,
+    start_time: arrow.Arrow = None,
     end_time: arrow.Arrow = None,
     queue: Queue = None,
     type: MatchType = None,
+    start: int = None,
+    count: int = None,
 ):
     return MatchHistory(
         continent=continent,
-        region=region,
-        platform=platform,
         puuid=puuid,
-        begin_index=begin_index,
-        end_index=end_index,
-        begin_time=begin_time,
+        start=start,
+        count=count,
+        start_time=start_time,
         end_time=end_time,
         queue=queue,
         type=type,
